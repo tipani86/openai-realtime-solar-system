@@ -65,6 +65,8 @@ Toggling the wifi icon will stop the session, and the conversation will be reset
 
 ## Demo flow
 
+**Make sure there is no background noise or echo when you talk to the model, as this may cause interruptions.**
+
 The demo is configured with instructions prompting the model to answer any question about the solar system. Additionally, the model has access to multiple tools that map to actions in the app or animations in the spline scene.
 
 ### Configured interactions
