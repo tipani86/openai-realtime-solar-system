@@ -22,7 +22,7 @@ It is implemented using the [Realtime + WebRTC integration](https://platform.api
 2. **Clone the Repository:**
 
    ```bash
-   git clone https://github.com/openai/realtime-solar-system-demo.git
+   git clone https://github.com/openai/openai-realtime-solar-system.git
    ```
 
 3. **Set your API key:**
