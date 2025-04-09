@@ -12,6 +12,9 @@ type ToolCallOutput = {
   [key: string]: any;
 };
 
+// Helper function to check if we're in a browser environment
+const isBrowser = () => typeof window !== 'undefined' && typeof navigator !== 'undefined';
+
 export default function App() {
   const [logs, setLogs] = useState<any[]>([]);
   const [toolCall, setToolCall] = useState<any>(null);
@@ -29,7 +32,7 @@ export default function App() {
   // Start a new realtime session
   async function startSession() {
     try {
-      if (!isSessionStarted) {
+      if (!isSessionStarted && isBrowser()) {
         setIsSessionStarted(true);
         
         // Get TURN server configuration
@@ -84,16 +87,21 @@ export default function App() {
           }
         };
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: true,
-        });
+        // Only access navigator.mediaDevices in browser environment
+        if (navigator.mediaDevices) {
+          const stream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
 
-        stream.getTracks().forEach((track) => {
-          const sender = pc.addTrack(track, stream);
-          if (sender) {
-            tracks.current = [...(tracks.current || []), sender];
-          }
-        });
+          stream.getTracks().forEach((track) => {
+            const sender = pc.addTrack(track, stream);
+            if (sender) {
+              tracks.current = [...(tracks.current || []), sender];
+            }
+          });
+        } else {
+          console.warn("MediaDevices API not available in this environment");
+        }
 
         // Set up data channel for sending and receiving events
         const dc = pc.createDataChannel("oai-events");
@@ -149,6 +157,12 @@ export default function App() {
   // Grabs a new mic track and replaces the placeholder track in the transceiver
   async function startRecording() {
     try {
+      // Only proceed if we're in a browser environment with MediaDevices API
+      if (!isBrowser() || !navigator.mediaDevices) {
+        console.warn("MediaDevices API not available");
+        return;
+      }
+
       const newStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
       });
@@ -198,6 +212,9 @@ export default function App() {
 
   // Creates a placeholder track that is silent
   function createEmptyAudioTrack(): MediaStreamTrack {
+    if (!isBrowser()) {
+      throw new Error("Audio context not available in server environment");
+    }
     const audioContext = new AudioContext();
     const destination = audioContext.createMediaStreamDestination();
     return destination.stream.getAudioTracks()[0];
@@ -207,7 +224,7 @@ export default function App() {
   const sendClientEvent = useCallback(
     (message: any) => {
       if (dataChannel) {
-        message.event_id = message.event_id || crypto.randomUUID();
+        message.event_id = message.event_id || (isBrowser() ? crypto.randomUUID() : 'server-generated');
         dataChannel.send(JSON.stringify(message));
       } else {
         console.error(
