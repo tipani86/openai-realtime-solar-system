@@ -19,32 +19,68 @@ It is implemented using the [Realtime + WebRTC integration](https://platform.ope
    - If you're new to the OpenAI API, [sign up for an account](https://platform.openai.com/signup).
    - Follow the [Quickstart](https://platform.openai.com/docs/quickstart) to retrieve your API key.
 
-2. **Clone the Repository:**
+2. **Set up TURN server (optional but recommended):**
+
+   - Sign up for a free account with a TURN server provider like [Metered](https://www.metered.ca/)
+   - Create a new app and get your TURN API key
+   - Add these to your `.env` file:
+     ```bash
+     TURN_DOMAIN=yourappname.metered.live
+     TURN_API_KEY=your-turn-api-key
+     ```
+
+3. **Clone the Repository:**
 
    ```bash
    git clone https://github.com/openai/openai-realtime-solar-system.git
    ```
 
-3. **Set your API key:**
+4. **Set up the FastAPI backend:**
 
-   2 options:
-
-   - Set the `OPENAI_API_KEY` environment variable [globally in your system](https://platform.openai.com/docs/quickstart#create-and-export-an-api-key)
-   - Set the `OPENAI_API_KEY` environment variable in the project:
-     Create a `.env` file at the root of the project and add the following line:
+   - Navigate to the `fastapi-backend` directory
+   - Create a virtual environment (recommended):
      ```bash
+     python -m venv venv
+     source venv/bin/activate  # On Windows, use: venv\Scripts\activate
+     ```
+   - Install dependencies:
+     ```bash
+     pip install -r requirements.txt
+     ```
+   - Copy the example environment file and update with your OpenAI API key:
+     ```bash
+     cp .env.example .env
+     ```
+   - Start the FastAPI server:
+     ```bash
+     python main.py
+     ```
+   - The backend will be available at http://localhost:8000
+
+5. **Set up the frontend:**
+
+   - Create a `.env` file at the root of the project with the following:
+     ```bash
+     # Only needed if not using FastAPI backend
      OPENAI_API_KEY=<your_api_key>
+     
+     # TURN server configuration (optional but recommended)
+     TURN_DOMAIN=yourappname.metered.live
+     TURN_API_KEY=your-turn-api-key
+     
+     # FastAPI backend
+     API_HOST=http://localhost:8000
      ```
 
-4. **Install dependencies:**
+6. **Install frontend dependencies:**
 
-   Navigate to the project directory and run:
+   Navigate to the project root directory and run:
 
    ```bash
    npm install
    ```
 
-5. **Run the app:**
+7. **Run the frontend app:**
 
    ```bash
    npm run dev
@@ -101,6 +137,22 @@ Here is an example flow that showcases the different interactions:
 8. Ask about its moons - 5 moons will pop up
 9. (optional): Do the same with Jupiter and ask about Galilean moons - 4 moons will pop up
 10. Ask something related to the position of the planets in the solar system, for example "how are the planets positioned in their orbits" - The view will change to a high level view with orbits
+
+## Network Configuration and TURN Server
+
+This application uses WebRTC to establish a connection with OpenAI's Realtime API. By default, WebRTC attempts to establish a direct peer-to-peer connection, which may not work in all network environments due to firewalls, NATs, or proxies.
+
+To address this, the application now supports using a TURN (Traversal Using Relays around NAT) server to relay the WebRTC traffic when a direct connection is not possible. This significantly improves connection reliability, especially in restrictive network environments.
+
+The application automatically fetches the optimal TURN servers based on your location from the configured TURN service provider. No additional configuration is needed once the TURN credentials are set in the `.env` file.
+
+## Architecture
+
+The application consists of two main parts:
+
+1. **FastAPI Backend**: Handles secure communication with OpenAI's API. It fetches ephemeral session tokens that are used to establish WebRTC connections. This separation ensures API keys are not exposed to the client.
+
+2. **Next.js Frontend**: Provides the user interface and manages the WebRTC connection to OpenAI's Realtime API. It communicates with the FastAPI backend to get session tokens and with the TURN server to facilitate WebRTC connections.
 
 ## Customization
 
