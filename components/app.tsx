@@ -29,7 +29,12 @@ export default function App() {
   // Fetch TURN iceServers from our API endpoint
   async function fetchIceServers() {
     try {
-      const response = await fetch("/api/turn");
+      const apiHost = process.env.API_HOST;
+      if (!apiHost) {
+        throw new Error("API_HOST environment variable is not set");
+      }
+      
+      const response = await fetch(`${apiHost}/turn`);
       if (!response.ok) {
         throw new Error(`Failed to fetch TURN iceServers: ${response.statusText}`);
       }

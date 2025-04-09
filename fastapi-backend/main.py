@@ -60,6 +60,34 @@ async def get_session():
     except httpx.RequestError as e:
         raise HTTPException(status_code=500, detail=f"Error making request to OpenAI: {str(e)}")
 
+@app.get("/turn")
+async def get_turn_servers():
+    """Get TURN server iceServers from Metered"""
+    
+    turn_domain = os.getenv("TURN_DOMAIN")
+    turn_api_key = os.getenv("TURN_API_KEY")
+    
+    if not turn_domain or not turn_api_key:
+        raise HTTPException(status_code=500, detail="TURN server configuration missing")
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.get(
+                f"https://{turn_domain}/api/v1/turn/credentials",
+                params={"apiKey": turn_api_key},
+                timeout=10.0
+            )
+            
+            if response.status_code != 200:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Error from TURN server: {response.text}"
+                )
+                
+            return response.json()
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=500, detail=f"Error making request to TURN server: {str(e)}")
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=3000, reload=True) 
