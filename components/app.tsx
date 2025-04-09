@@ -5,7 +5,6 @@ import Scene from "@/components/scene";
 import Logs from "@/components/logs";
 import { useEffect, useRef, useState, useCallback } from "react";
 import { INSTRUCTIONS, TOOLS } from "@/lib/config";
-import { BASE_URL, MODEL } from "@/lib/constants";
 
 type ToolCallOutput = {
   response: string;
@@ -62,15 +61,6 @@ export default function App() {
           iceServers = [];
         }
 
-        // Get an ephemeral session token
-        const session = await fetch("/api/session").then((response) =>
-          response.json()
-        );
-        const sessionToken = session.client_secret.value;
-        const sessionId = session.id;
-
-        console.log("Session id:", sessionId);
-
         // Create a peer connection with TURN iceServers
         const pc = new RTCPeerConnection({
           iceServers: iceServers
@@ -123,14 +113,24 @@ export default function App() {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
-        const sdpResponse = await fetch(`${BASE_URL}?model=${MODEL}`, {
+        // Get the API host from environment variable
+        const apiHost = process.env.API_HOST;
+        if (!apiHost) {
+          throw new Error("API_HOST environment variable is not set");
+        }
+
+        // Send the SDP offer to our backend, which will forward it to OpenAI's realtime API
+        const sdpResponse = await fetch(`${apiHost}/sdp`, {
           method: "POST",
           body: offer.sdp,
           headers: {
-            Authorization: `Bearer ${sessionToken}`,
             "Content-Type": "application/sdp",
           },
         });
+
+        if (!sdpResponse.ok) {
+          throw new Error(`Failed to get SDP answer: ${sdpResponse.statusText}`);
+        }
 
         const answer: RTCSessionDescriptionInit = {
           type: "answer",
