@@ -28,9 +28,9 @@ export default function App() {
   // Fetch TURN iceServers from our API endpoint
   async function fetchIceServers() {
     try {
-      const apiHost = process.env.API_HOST;
+      const apiHost = process.env.NEXT_PUBLIC_API_HOST;
       if (!apiHost) {
-        throw new Error("API_HOST environment variable is not set");
+        throw new Error("NEXT_PUBLIC_API_HOST environment variable is not set");
       }
       
       const response = await fetch(`${apiHost}/turn`);
@@ -114,9 +114,9 @@ export default function App() {
         await pc.setLocalDescription(offer);
 
         // Get the API host from environment variable
-        const apiHost = process.env.API_HOST;
+        const apiHost = process.env.NEXT_PUBLIC_API_HOST;
         if (!apiHost) {
-          throw new Error("API_HOST environment variable is not set");
+          throw new Error("NEXT_PUBLIC_API_HOST environment variable is not set");
         }
 
         // Send the SDP offer to our backend, which will forward it to OpenAI's realtime API

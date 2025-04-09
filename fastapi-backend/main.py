@@ -53,7 +53,7 @@ async def negotiate_sdp(request: Request):
                 timeout=10.0
             )
             
-            if response.status_code != 200:
+            if response.status_code not in [200, 201]:
                 raise HTTPException(
                     status_code=response.status_code, 
                     detail=f"Error from OpenAI API: {response.text}"
