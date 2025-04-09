@@ -50,6 +50,29 @@ export default function App() {
 
         console.log("Session id:", sessionId);
 
+        // Ensure we have audio access before creating the peer connection
+        let audioStream: MediaStream | null = null;
+        
+        // Only access navigator.mediaDevices in browser environment
+        if (!navigator.mediaDevices) {
+          console.error("MediaDevices API not available in this environment");
+          setIsSessionStarted(false);
+          return; // Exit early as we can't proceed without audio
+        }
+        
+        try {
+          // Try to get user media with audio
+          audioStream = await navigator.mediaDevices.getUserMedia({
+            audio: true,
+          });
+          setAudioStream(audioStream);
+          console.log("Successfully obtained audio stream");
+        } catch (mediaError) {
+          console.error("Error accessing microphone:", mediaError);
+          setIsSessionStarted(false);
+          return; // Exit if we can't get audio access
+        }
+
         // Create a peer connection with Metered's TURN servers
         const pc = new RTCPeerConnection({
           iceServers: iceServers
@@ -87,20 +110,32 @@ export default function App() {
           }
         };
 
-        // Only access navigator.mediaDevices in browser environment
-        if (navigator.mediaDevices) {
-          const stream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-          });
-
-          stream.getTracks().forEach((track) => {
-            const sender = pc.addTrack(track, stream);
-            if (sender) {
-              tracks.current = [...(tracks.current || []), sender];
-            }
-          });
-        } else {
-          console.warn("MediaDevices API not available in this environment");
+        // Add all audio tracks to the peer connection
+        let trackAdded = false;
+        if (audioStream) {
+          const audioTracks = audioStream.getAudioTracks();
+          if (audioTracks.length > 0) {
+            audioTracks.forEach((track) => {
+              const sender = pc.addTrack(track, audioStream!);
+              if (sender) {
+                tracks.current = [...(tracks.current || []), sender];
+                trackAdded = true;
+              }
+            });
+            console.log(`Added ${audioTracks.length} audio tracks to peer connection`);
+          } else {
+            console.warn("No audio tracks found in the stream");
+          }
+        }
+        
+        // If no tracks were added, we can't proceed - audio is required
+        if (!trackAdded) {
+          console.error("Failed to add audio tracks to peer connection");
+          if (audioStream) {
+            audioStream.getTracks().forEach(track => track.stop());
+          }
+          setIsSessionStarted(false);
+          return;
         }
 
         // Set up data channel for sending and receiving events
@@ -108,9 +143,23 @@ export default function App() {
         setDataChannel(dc);
 
         // Start the session using the Session Description Protocol (SDP)
-        const offer = await pc.createOffer();
+        console.log("Creating offer with audio tracks");
+        const offer = await pc.createOffer({
+          offerToReceiveAudio: true,  // Explicitly request audio
+          offerToReceiveVideo: false
+        });
+        
+        // Verify that the offer includes audio
+        if (!offer.sdp?.includes('m=audio')) {
+          console.error("Generated offer does not contain audio section");
+          stopSession();
+          return;
+        }
+        
+        console.log("Setting local description");
         await pc.setLocalDescription(offer);
 
+        console.log("Sending SDP offer to OpenAI");
         const sdpResponse = await fetch(`${BASE_URL}?model=${MODEL}`, {
           method: "POST",
           body: offer.sdp,
@@ -120,16 +169,29 @@ export default function App() {
           },
         });
 
+        if (!sdpResponse.ok) {
+          const errorText = await sdpResponse.text();
+          console.error("Error response from OpenAI:", errorText);
+          stopSession();
+          return;
+        }
+
+        const answerSdp = await sdpResponse.text();
+        console.log("Received SDP answer from OpenAI");
+        
         const answer: RTCSessionDescriptionInit = {
           type: "answer",
-          sdp: await sdpResponse.text(),
+          sdp: answerSdp,
         };
+        
         await pc.setRemoteDescription(answer);
+        console.log("Set remote description");
 
         peerConnection.current = pc;
       }
     } catch (error) {
       console.error("Error starting session:", error);
+      stopSession();
     }
   }
 
@@ -163,29 +225,63 @@ export default function App() {
         return;
       }
 
+      // Check if peer connection exists
+      if (!peerConnection.current) {
+        console.warn("Cannot start recording: No peer connection established");
+        return;
+      }
+
+      console.log("Requesting microphone access...");
       const newStream = await navigator.mediaDevices.getUserMedia({
         audio: true,
       });
+      
+      if (!newStream || newStream.getAudioTracks().length === 0) {
+        console.error("Failed to obtain audio tracks from microphone");
+        return;
+      }
+      
+      console.log(`Obtained ${newStream.getAudioTracks().length} audio tracks`);
       setAudioStream(newStream);
 
       // If we already have an audioSender, just replace its track:
-      if (tracks.current) {
+      if (tracks.current && tracks.current.length > 0) {
         const micTrack = newStream.getAudioTracks()[0];
+        console.log("Replacing existing audio track");
+        let replaced = false;
+        
         tracks.current.forEach((sender) => {
+          replaced = true;
           sender.replaceTrack(micTrack);
         });
+        
+        if (!replaced) {
+          console.warn("No senders found to replace track");
+        }
       } else if (peerConnection.current) {
         // Fallback if audioSender somehow didn't get set
+        console.log("Adding audio track to connection");
+        let added = false;
+        
         newStream.getTracks().forEach((track) => {
           const sender = peerConnection.current?.addTrack(track, newStream);
           if (sender) {
+            added = true;
             tracks.current = [...(tracks.current || []), sender];
           }
         });
+        
+        if (!added) {
+          console.warn("Failed to add tracks to connection");
+          return;
+        }
+      } else {
+        console.warn("No peer connection available to add tracks");
+        return;
       }
 
       setIsListening(true);
-      console.log("Microphone started.");
+      console.log("Microphone started successfully");
     } catch (error) {
       console.error("Error accessing microphone:", error);
     }
@@ -193,20 +289,40 @@ export default function App() {
 
   // Replaces the mic track with a placeholder track
   function stopRecording() {
+    if (!isBrowser()) {
+      return;
+    }
+    
     setIsListening(false);
+    console.log("Stopping recording");
 
     // Stop existing mic tracks so the user's mic is off
     if (audioStream) {
-      audioStream.getTracks().forEach((track) => track.stop());
+      console.log("Stopping audio tracks");
+      audioStream.getTracks().forEach((track) => {
+        track.stop();
+        console.log(`Stopped track: ${track.id}`);
+      });
     }
     setAudioStream(null);
 
-    // Replace with a placeholder (silent) track
-    if (tracks.current) {
-      const placeholderTrack = createEmptyAudioTrack();
-      tracks.current.forEach((sender) => {
-        sender.replaceTrack(placeholderTrack);
-      });
+    // Replace with a placeholder (silent) track if we have senders
+    if (tracks.current && tracks.current.length > 0) {
+      try {
+        console.log("Creating silent audio track");
+        const placeholderTrack = createEmptyAudioTrack();
+        
+        console.log("Replacing with silent track");
+        tracks.current.forEach((sender) => {
+          sender.replaceTrack(placeholderTrack);
+        });
+        
+        console.log("Microphone replaced with silent track");
+      } catch (error) {
+        console.error("Error creating silent track:", error);
+      }
+    } else {
+      console.log("No audio senders to replace");
     }
   }
 
@@ -215,9 +331,27 @@ export default function App() {
     if (!isBrowser()) {
       throw new Error("Audio context not available in server environment");
     }
-    const audioContext = new AudioContext();
-    const destination = audioContext.createMediaStreamDestination();
-    return destination.stream.getAudioTracks()[0];
+    
+    try {
+      // Create an audio context for generating a silent audio track
+      const audioContext = new AudioContext();
+      const oscillator = audioContext.createOscillator();
+      const destination = audioContext.createMediaStreamDestination();
+      
+      // Connect oscillator to destination but set gain to 0 (silent)
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 0;
+      oscillator.connect(gainNode);
+      gainNode.connect(destination);
+      
+      // Start the oscillator
+      oscillator.start();
+      
+      return destination.stream.getAudioTracks()[0];
+    } catch (error) {
+      console.error("Failed to create empty audio track:", error);
+      throw new Error("Failed to create silent audio track");
+    }
   }
 
   // Send a message to the model
