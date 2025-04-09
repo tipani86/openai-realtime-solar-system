@@ -31,6 +31,13 @@ export default function App() {
     try {
       if (!isSessionStarted) {
         setIsSessionStarted(true);
+        
+        // Get TURN server configuration
+        const iceServers = await fetch("/api/turn").then((response) =>
+          response.json()
+        );
+        console.log("ICE Servers:", iceServers);
+        
         // Get an ephemeral session token
         const session = await fetch("/api/session").then((response) =>
           response.json()
@@ -40,8 +47,10 @@ export default function App() {
 
         console.log("Session id:", sessionId);
 
-        // Create a peer connection
-        const pc = new RTCPeerConnection();
+        // Create a peer connection with Metered's TURN servers
+        const pc = new RTCPeerConnection({
+          iceServers: iceServers
+        });
 
         // Set up to play remote audio from the model
         if (!audioElement.current) {
@@ -51,6 +60,27 @@ export default function App() {
         pc.ontrack = (e) => {
           if (audioElement.current) {
             audioElement.current.srcObject = e.streams[0];
+          }
+        };
+
+        // Log ICE connection state changes
+        pc.oniceconnectionstatechange = () => {
+          console.log("ICE connection state:", pc.iceConnectionState);
+        };
+
+        // Log ICE gathering state changes
+        pc.onicegatheringstatechange = () => {
+          console.log("ICE gathering state:", pc.iceGatheringState);
+        };
+
+        // Log ICE candidates
+        pc.onicecandidate = (event) => {
+          if (event.candidate) {
+            console.log("ICE candidate:", event.candidate.candidate);
+            // We can see if TURN servers are being used by looking for "relay" in the candidate
+            if (event.candidate.candidate.includes("relay")) {
+              console.log("Using TURN relay server!");
+            }
           }
         };
 
@@ -151,7 +181,7 @@ export default function App() {
   function stopRecording() {
     setIsListening(false);
 
-    // Stop existing mic tracks so the user’s mic is off
+    // Stop existing mic tracks so the user's mic is off
     if (audioStream) {
       audioStream.getTracks().forEach((track) => track.stop());
     }
