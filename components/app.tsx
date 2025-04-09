@@ -13,7 +13,7 @@ type ToolCallOutput = {
 };
 
 // Helper function to check if we're in a browser environment
-const isBrowser = () => typeof window !== 'undefined' && typeof navigator !== 'undefined';
+const isBrowser = () => typeof window !== 'undefined';
 
 export default function App() {
   const [logs, setLogs] = useState<any[]>([]);
@@ -30,173 +30,179 @@ export default function App() {
   const tracks = useRef<RTCRtpSender[] | null>(null);
 
   // Start a new realtime session
-  async function startSession() {
+  const startSession = useCallback(async () => {
+    if (!isBrowser() || isSessionStarted) {
+      return;
+    }
+    
     try {
-      if (!isSessionStarted && isBrowser()) {
-        setIsSessionStarted(true);
-        
-        // Get TURN server configuration
-        const iceServers = await fetch("/api/turn").then((response) =>
-          response.json()
-        );
-        console.log("ICE Servers:", iceServers);
-        
-        // Get an ephemeral session token
-        const session = await fetch("/api/session").then((response) =>
-          response.json()
-        );
-        const sessionToken = session.client_secret.value;
-        const sessionId = session.id;
+      setIsSessionStarted(true);
+      
+      // Get TURN server configuration
+      const iceServers = await fetch("/api/turn").then((response) =>
+        response.json()
+      );
+      console.log("ICE Servers:", iceServers);
+      
+      // Get an ephemeral session token
+      const session = await fetch("/api/session").then((response) =>
+        response.json()
+      );
+      const sessionToken = session.client_secret.value;
+      const sessionId = session.id;
 
-        console.log("Session id:", sessionId);
+      console.log("Session id:", sessionId);
 
-        // Ensure we have audio access before creating the peer connection
-        let audioStream: MediaStream | null = null;
-        
-        // Only access navigator.mediaDevices in browser environment
-        if (!navigator.mediaDevices) {
-          console.error("MediaDevices API not available in this environment");
-          setIsSessionStarted(false);
-          return; // Exit early as we can't proceed without audio
-        }
-        
-        try {
-          // Try to get user media with audio
-          audioStream = await navigator.mediaDevices.getUserMedia({
-            audio: true,
-          });
-          setAudioStream(audioStream);
-          console.log("Successfully obtained audio stream");
-        } catch (mediaError) {
-          console.error("Error accessing microphone:", mediaError);
-          setIsSessionStarted(false);
-          return; // Exit if we can't get audio access
-        }
-
-        // Create a peer connection with Metered's TURN servers
-        const pc = new RTCPeerConnection({
-          iceServers: iceServers
-        });
-
-        // Set up to play remote audio from the model
-        if (!audioElement.current) {
-          audioElement.current = document.createElement("audio");
-        }
-        audioElement.current.autoplay = true;
-        pc.ontrack = (e) => {
-          if (audioElement.current) {
-            audioElement.current.srcObject = e.streams[0];
-          }
-        };
-
-        // Log ICE connection state changes
-        pc.oniceconnectionstatechange = () => {
-          console.log("ICE connection state:", pc.iceConnectionState);
-        };
-
-        // Log ICE gathering state changes
-        pc.onicegatheringstatechange = () => {
-          console.log("ICE gathering state:", pc.iceGatheringState);
-        };
-
-        // Log ICE candidates
-        pc.onicecandidate = (event) => {
-          if (event.candidate) {
-            console.log("ICE candidate:", event.candidate.candidate);
-            // We can see if TURN servers are being used by looking for "relay" in the candidate
-            if (event.candidate.candidate.includes("relay")) {
-              console.log("Using TURN relay server!");
-            }
-          }
-        };
-
-        // Add all audio tracks to the peer connection
-        let trackAdded = false;
-        if (audioStream) {
-          const audioTracks = audioStream.getAudioTracks();
-          if (audioTracks.length > 0) {
-            audioTracks.forEach((track) => {
-              const sender = pc.addTrack(track, audioStream!);
-              if (sender) {
-                tracks.current = [...(tracks.current || []), sender];
-                trackAdded = true;
-              }
-            });
-            console.log(`Added ${audioTracks.length} audio tracks to peer connection`);
-          } else {
-            console.warn("No audio tracks found in the stream");
-          }
-        }
-        
-        // If no tracks were added, we can't proceed - audio is required
-        if (!trackAdded) {
-          console.error("Failed to add audio tracks to peer connection");
-          if (audioStream) {
-            audioStream.getTracks().forEach(track => track.stop());
-          }
-          setIsSessionStarted(false);
-          return;
-        }
-
-        // Set up data channel for sending and receiving events
-        const dc = pc.createDataChannel("oai-events");
-        setDataChannel(dc);
-
-        // Start the session using the Session Description Protocol (SDP)
-        console.log("Creating offer with audio tracks");
-        const offer = await pc.createOffer({
-          offerToReceiveAudio: true,  // Explicitly request audio
-          offerToReceiveVideo: false
-        });
-        
-        // Verify that the offer includes audio
-        if (!offer.sdp?.includes('m=audio')) {
-          console.error("Generated offer does not contain audio section");
-          stopSession();
-          return;
-        }
-        
-        console.log("Setting local description");
-        await pc.setLocalDescription(offer);
-
-        console.log("Sending SDP offer to OpenAI");
-        const sdpResponse = await fetch(`${BASE_URL}?model=${MODEL}`, {
-          method: "POST",
-          body: offer.sdp,
-          headers: {
-            Authorization: `Bearer ${sessionToken}`,
-            "Content-Type": "application/sdp",
-          },
-        });
-
-        if (!sdpResponse.ok) {
-          const errorText = await sdpResponse.text();
-          console.error("Error response from OpenAI:", errorText);
-          stopSession();
-          return;
-        }
-
-        const answerSdp = await sdpResponse.text();
-        console.log("Received SDP answer from OpenAI");
-        
-        const answer: RTCSessionDescriptionInit = {
-          type: "answer",
-          sdp: answerSdp,
-        };
-        
-        await pc.setRemoteDescription(answer);
-        console.log("Set remote description");
-
-        peerConnection.current = pc;
+      // Ensure we have audio access before creating the peer connection
+      let audioStream: MediaStream | null = null;
+      
+      // Check for MediaDevices API
+      if (!navigator.mediaDevices) {
+        console.error("MediaDevices API not available in this environment");
+        setIsSessionStarted(false);
+        return; // Exit early as we can't proceed without audio
       }
+      
+      try {
+        // Try to get user media with audio
+        audioStream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+        });
+        setAudioStream(audioStream);
+        console.log("Successfully obtained audio stream");
+      } catch (mediaError) {
+        console.error("Error accessing microphone:", mediaError);
+        setIsSessionStarted(false);
+        return; // Exit if we can't get audio access
+      }
+
+      // Create a peer connection with Metered's TURN servers
+      const pc = new RTCPeerConnection({
+        iceServers: iceServers
+      });
+
+      // Set up to play remote audio from the model
+      if (!audioElement.current) {
+        audioElement.current = document.createElement("audio");
+      }
+      audioElement.current.autoplay = true;
+      pc.ontrack = (e) => {
+        if (audioElement.current) {
+          audioElement.current.srcObject = e.streams[0];
+        }
+      };
+
+      // Log ICE connection state changes
+      pc.oniceconnectionstatechange = () => {
+        console.log("ICE connection state:", pc.iceConnectionState);
+      };
+
+      // Log ICE gathering state changes
+      pc.onicegatheringstatechange = () => {
+        console.log("ICE gathering state:", pc.iceGatheringState);
+      };
+
+      // Log ICE candidates
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log("ICE candidate:", event.candidate.candidate);
+          // We can see if TURN servers are being used by looking for "relay" in the candidate
+          if (event.candidate.candidate.includes("relay")) {
+            console.log("Using TURN relay server!");
+          }
+        }
+      };
+
+      // Add all audio tracks to the peer connection
+      let trackAdded = false;
+      if (audioStream) {
+        const audioTracks = audioStream.getAudioTracks();
+        if (audioTracks.length > 0) {
+          audioTracks.forEach((track) => {
+            const sender = pc.addTrack(track, audioStream!);
+            if (sender) {
+              tracks.current = [...(tracks.current || []), sender];
+              trackAdded = true;
+            }
+          });
+          console.log(`Added ${audioTracks.length} audio tracks to peer connection`);
+        } else {
+          console.warn("No audio tracks found in the stream");
+        }
+      }
+      
+      // If no tracks were added, we can't proceed - audio is required
+      if (!trackAdded) {
+        console.error("Failed to add audio tracks to peer connection");
+        if (audioStream) {
+          audioStream.getTracks().forEach(track => track.stop());
+        }
+        setIsSessionStarted(false);
+        return;
+      }
+
+      // Set up data channel for sending and receiving events
+      const dc = pc.createDataChannel("oai-events");
+      setDataChannel(dc);
+
+      // Start the session using the Session Description Protocol (SDP)
+      console.log("Creating offer with audio tracks");
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: true,  // Explicitly request audio
+        offerToReceiveVideo: false
+      });
+      
+      // Verify that the offer includes audio
+      if (!offer.sdp?.includes('m=audio')) {
+        console.error("Generated offer does not contain audio section");
+        stopSession();
+        return;
+      }
+      
+      console.log("Setting local description");
+      await pc.setLocalDescription(offer);
+
+      console.log("Sending SDP offer to OpenAI");
+      const sdpResponse = await fetch(`${BASE_URL}?model=${MODEL}`, {
+        method: "POST",
+        body: offer.sdp,
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          "Content-Type": "application/sdp",
+        },
+      });
+
+      if (!sdpResponse.ok) {
+        const errorText = await sdpResponse.text();
+        console.error("Error response from OpenAI:", errorText);
+        stopSession();
+        return;
+      }
+
+      const answerSdp = await sdpResponse.text();
+      console.log("Received SDP answer from OpenAI");
+      
+      const answer: RTCSessionDescriptionInit = {
+        type: "answer",
+        sdp: answerSdp,
+      };
+      
+      await pc.setRemoteDescription(answer);
+      console.log("Set remote description");
+
+      peerConnection.current = pc;
     } catch (error) {
       console.error("Error starting session:", error);
       stopSession();
     }
-  }
+  }, [isSessionStarted]);
 
   // Stop current session, clean up peer connection and data channel
-  function stopSession() {
+  const stopSession = useCallback(() => {
+    if (!isBrowser()) {
+      return;
+    }
+
     if (dataChannel) {
       dataChannel.close();
     }
@@ -214,13 +220,17 @@ export default function App() {
     setAudioStream(null);
     setIsListening(false);
     audioTransceiver.current = null;
-  }
+  }, [dataChannel, audioStream]);
 
   // Grabs a new mic track and replaces the placeholder track in the transceiver
-  async function startRecording() {
+  const startRecording = useCallback(async () => {
+    if (!isBrowser()) {
+      return;
+    }
+
     try {
       // Only proceed if we're in a browser environment with MediaDevices API
-      if (!isBrowser() || !navigator.mediaDevices) {
+      if (!navigator.mediaDevices) {
         console.warn("MediaDevices API not available");
         return;
       }
@@ -285,10 +295,10 @@ export default function App() {
     } catch (error) {
       console.error("Error accessing microphone:", error);
     }
-  }
+  }, []);
 
   // Replaces the mic track with a placeholder track
-  function stopRecording() {
+  const stopRecording = useCallback(() => {
     if (!isBrowser()) {
       return;
     }
@@ -324,7 +334,7 @@ export default function App() {
     } else {
       console.log("No audio senders to replace");
     }
-  }
+  }, [audioStream]);
 
   // Creates a placeholder track that is silent
   function createEmptyAudioTrack(): MediaStreamTrack {
@@ -357,8 +367,10 @@ export default function App() {
   // Send a message to the model
   const sendClientEvent = useCallback(
     (message: any) => {
+      if (!isBrowser()) return;
+      
       if (dataChannel) {
-        message.event_id = message.event_id || (isBrowser() ? crypto.randomUUID() : 'server-generated');
+        message.event_id = message.event_id || crypto.randomUUID();
         dataChannel.send(JSON.stringify(message));
       } else {
         console.error(
@@ -372,6 +384,8 @@ export default function App() {
 
   // Attach event listeners to the data channel when a new one is created
   useEffect(() => {
+    if (!isBrowser() || !dataChannel) return;
+    
     async function handleToolCall(output: any) {
       const toolCall = {
         name: output.name,
@@ -415,39 +429,43 @@ export default function App() {
       }
     }
 
-    if (dataChannel) {
-      // Append new server events to the list
-      dataChannel.addEventListener("message", (e) => {
-        const event = JSON.parse(e.data);
-        if (event.type === "response.done") {
-          const output = event.response.output[0];
-          setLogs((prev) => [output, ...prev]);
-          if (output?.type === "function_call") {
-            handleToolCall(output);
-          }
+    // Append new server events to the list
+    dataChannel.addEventListener("message", (e) => {
+      const event = JSON.parse(e.data);
+      if (event.type === "response.done") {
+        const output = event.response.output[0];
+        setLogs((prev) => [output, ...prev]);
+        if (output?.type === "function_call") {
+          handleToolCall(output);
         }
-      });
+      }
+    });
 
-      // Set session active when the data channel is opened
-      dataChannel.addEventListener("open", () => {
-        setIsSessionActive(true);
-        setIsListening(true);
-        setLogs([]);
-        // Send session config
-        const sessionUpdate = {
-          type: "session.update",
-          session: {
-            tools: TOOLS,
-            instructions: INSTRUCTIONS,
-          },
-        };
-        sendClientEvent(sessionUpdate);
-        console.log("Session update sent:", sessionUpdate);
-      });
-    }
+    // Set session active when the data channel is opened
+    dataChannel.addEventListener("open", () => {
+      setIsSessionActive(true);
+      setIsListening(true);
+      setLogs([]);
+      // Send session config
+      const sessionUpdate = {
+        type: "session.update",
+        session: {
+          tools: TOOLS,
+          instructions: INSTRUCTIONS,
+        },
+      };
+      sendClientEvent(sessionUpdate);
+      console.log("Session update sent:", sessionUpdate);
+    });
+
+    // Cleanup function to remove event listeners when component unmounts
+    return () => {
+      // We can't remove the event listeners specifically since we'd need a reference to the
+      // handler functions, so we'll rely on general cleanup in the stopSession function
+    };
   }, [dataChannel, sendClientEvent]);
 
-  const handleConnectClick = async () => {
+  const handleConnectClick = useCallback(() => {
     if (isSessionActive) {
       console.log("Stopping session.");
       stopSession();
@@ -455,9 +473,9 @@ export default function App() {
       console.log("Starting session.");
       startSession();
     }
-  };
+  }, [isSessionActive, startSession, stopSession]);
 
-  const handleMicToggleClick = async () => {
+  const handleMicToggleClick = useCallback(() => {
     if (isListening) {
       console.log("Stopping microphone.");
       stopRecording();
@@ -465,7 +483,7 @@ export default function App() {
       console.log("Starting microphone.");
       startRecording();
     }
-  };
+  }, [isListening, startRecording, stopRecording]);
 
   return (
     <div className="relative size-full">
